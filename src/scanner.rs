@@ -1,11 +1,13 @@
 use crate::deployment::find_deployment_block;
 use crate::events::{Transfer as EventTransfer, decode_transfer_event};
-use crate::repository::{Database, Token, Transfer, TokenRepository, TransferRepository};
+use crate::insertion_worker::{run_insertion_worker, TransferBatch};
+use crate::repository::{Database, Token, Transfer, TokenRepository};
 use crate::rpc::RpcClient;
 use alloy::sol_types::SolEvent;
 use alloy_primitives::{Address, B256};
 use anyhow::Result;
 use std::time::{Duration, Instant};
+use tokio::sync::mpsc;
 use tokio::time::sleep;
 use tracing::{info, warn};
 
@@ -39,6 +41,16 @@ impl Scanner {
             .unwrap_or(deployment_block);
 
         info!("Starting scan from block {}", last_processed_block);
+        
+        // Create channel for sending batches to insertion worker
+        let (tx, rx) = mpsc::channel::<TransferBatch>(10);
+        
+        // Spawn insertion worker
+        let db_clone = self.db.clone();
+        let contract_address = self.contract_address;
+        let insertion_handle = tokio::spawn(async move {
+            run_insertion_worker(db_clone, contract_address, rx).await
+        });
 
         loop {
             let loop_start = Instant::now();
@@ -77,37 +89,41 @@ impl Scanner {
             
             info!("Received {} logs for blocks {} to {}", logs.len(), from, to_block);
 
-            if !logs.is_empty() {
-                let mut transfers = Vec::new();
-
-                for log in logs {
-                    match decode_transfer_event(&log) {
-                        Ok(event) => {
-                            transfers.push(Transfer {
-                                transaction_hash: format!("{:?}", log.transaction_hash.unwrap()),
-                                log_index: log.log_index.unwrap(),
-                                token_address: self.contract_address,
-                                from_address: event.from,
-                                to_address: event.to,
-                                value: event.value.to_string(),
-                                block_number: log.block_number.unwrap(),
-                            });
-                        }
-                        Err(e) => {
-                            warn!("Failed to decode transfer event: {}", e);
-                        }
+            let mut transfers = Vec::new();
+            
+            for log in &logs {
+                match decode_transfer_event(log) {
+                    Ok(event) => {
+                        transfers.push(Transfer {
+                            transaction_hash: format!("{:?}", log.transaction_hash.unwrap()),
+                            log_index: log.log_index.unwrap(),
+                            token_address: self.contract_address,
+                            from_address: event.from,
+                            to_address: event.to,
+                            value: event.value.to_string(),
+                            block_number: log.block_number.unwrap(),
+                        });
+                    }
+                    Err(e) => {
+                        warn!("Failed to decode transfer event: {}", e);
                     }
                 }
-
-                let transfer_repo = TransferRepository::new(&self.db.conn);
-                let inserted = transfer_repo.insert_batch(&transfers)?;
-                info!("Inserted {} new transfers", inserted);
             }
 
-            token_repo.update_last_processed_block(&self.contract_address, to_block)?;
-            last_processed_block = to_block;
+            // Send batch to insertion worker
+            if !transfers.is_empty() || last_processed_block < to_block {
+                let batch = TransferBatch {
+                    transfers,
+                    end_block: to_block,
+                };
+                
+                if tx.send(batch).await.is_err() {
+                    warn!("Insertion worker has stopped, exiting...");
+                    break;
+                }
+            }
 
-            info!("Updated last processed block to {}", last_processed_block);
+            last_processed_block = to_block;
             
             // Smart rate limiting: ensure minimum time between loop iterations
             let loop_duration = loop_start.elapsed();
@@ -116,6 +132,12 @@ impl Scanner {
                 sleep(target_duration - loop_duration).await;
             }
         }
+        
+        // Close channel and wait for insertion worker to finish
+        drop(tx);
+        insertion_handle.await??;
+        
+        Ok(())
     }
 
     async fn ensure_deployment_block(&self) -> Result<u64> {

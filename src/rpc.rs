@@ -28,8 +28,7 @@ pub struct RpcClient {
 impl RpcClient {
     pub fn new(rpc_url: &str) -> Result<Self> {
         let url = rpc_url.parse().context("Invalid RPC URL")?;
-        let provider: AlloyFullProvider = ProviderBuilder::new()
-            .on_http(url);
+        let provider: AlloyFullProvider = ProviderBuilder::new().connect_http(url);
 
         Ok(RpcClient { provider })
     }
@@ -66,10 +65,7 @@ impl RpcClient {
             .from_block(from_block)
             .to_block(to_block);
 
-        let logs = self
-            .provider
-            .get_logs(&filter)
-            .await?;
+        let logs = self.provider.get_logs(&filter).await?;
 
         Ok(logs)
     }

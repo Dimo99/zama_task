@@ -1,6 +1,7 @@
 mod config;
 mod deployment;
 mod events;
+mod insertion_worker;
 mod repository;
 mod rpc;
 mod scanner;
@@ -11,7 +12,6 @@ use repository::Database;
 use rpc::RpcClient;
 use scanner::Scanner;
 use tracing::{error, info};
-use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> Result<()> {

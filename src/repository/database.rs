@@ -3,6 +3,7 @@ use rusqlite::Connection;
 
 pub struct Database {
     pub conn: Connection,
+    db_path: String,
 }
 
 impl Database {
@@ -11,7 +12,10 @@ impl Database {
         let conn = Connection::open(db_path)
             .context("Failed to open database")?;
         
-        let db = Database { conn };
+        let db = Database { 
+            conn,
+            db_path: db_path.to_string(),
+        };
         db.create_tables()?;
         Ok(db)
     }
@@ -63,5 +67,17 @@ impl Database {
         )?;
 
         Ok(())
+    }
+}
+
+impl Clone for Database {
+    fn clone(&self) -> Self {
+        // Create a new connection when cloning
+        let conn = Connection::open(&self.db_path)
+            .expect("Failed to open database connection during clone");
+        Database {
+            conn,
+            db_path: self.db_path.clone(),
+        }
     }
 }
