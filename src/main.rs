@@ -1,0 +1,42 @@
+mod config;
+mod deployment;
+mod events;
+mod repository;
+mod rpc;
+mod scanner;
+
+use anyhow::Result;
+use config::Config;
+use repository::Database;
+use rpc::RpcClient;
+use scanner::Scanner;
+use tracing::{error, info};
+use tracing_subscriber::EnvFilter;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    tracing_subscriber::fmt()
+        .init();
+
+    info!("Starting Ethereum Log Indexer");
+
+    let config = Config::from_env()?;
+    info!("Configuration loaded");
+    info!("Contract address: {:?}", config.erc20_contract_address);
+    info!("RPC URL: {}", config.json_rpc_url);
+
+    let db = Database::new(&config.database_url)?;
+    info!("Database initialized");
+
+    let client = RpcClient::new(&config.json_rpc_url)?;
+    info!("RPC client connected");
+
+    let mut scanner = Scanner::new(client, db, config.erc20_contract_address)?;
+    
+    if let Err(e) = scanner.run().await {
+        error!("Scanner error: {}", e);
+        return Err(e);
+    }
+
+    Ok(())
+}
