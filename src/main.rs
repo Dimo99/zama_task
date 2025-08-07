@@ -23,12 +23,12 @@ async fn main() -> Result<()> {
     let config = Config::from_env()?;
     info!("Configuration loaded");
     info!("Contract address: {:?}", config.erc20_contract_address);
-    info!("RPC URL: {}", config.json_rpc_url);
+    info!("RPC URLs: {} endpoint(s) configured", config.json_rpc_urls.len());
 
     let db = Database::new(&config.database_url)?;
     info!("Database initialized");
 
-    let client = RpcClient::new(&config.json_rpc_url)?;
+    let client = RpcClient::new(&config.json_rpc_urls)?;
     info!("RPC client connected");
 
     let mut scanner = Scanner::new(client, db, config.erc20_contract_address)?;

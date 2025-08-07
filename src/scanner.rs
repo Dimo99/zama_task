@@ -95,21 +95,10 @@ impl Scanner {
                         
                         // Create the future and push it to FuturesOrdered
                         let fetch_future = async move {
-                            let logs = match client
+                            let logs = client
                                 .get_logs(from, to, contract_address, transfer_topic)
-                                .await
-                            {
-                                Ok(logs) => logs,
-                                Err(e) if e.to_string().contains("429") => {
-                                    warn!("Rate limited, waiting 1 second before retry...");
-                                    sleep(Duration::from_secs(1)).await;
-                                    client
-                                        .get_logs(from, to, contract_address, transfer_topic)
-                                        .await?
-                                }
-                                Err(e) => return Err(e),
-                            };
-                            Ok((from, to, logs))
+                                .await?;
+                            Ok::<_, anyhow::Error>((from, to, logs))
                         };
                         
                         pending_fetches.push_back(fetch_future);
