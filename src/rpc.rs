@@ -21,6 +21,7 @@ type AlloyFullProvider = FillProvider<
     alloy::providers::RootProvider,
 >;
 
+#[derive(Clone)]
 pub struct RpcClient {
     provider: AlloyFullProvider,
 }

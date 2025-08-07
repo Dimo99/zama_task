@@ -1,2 +1,3 @@
 /target
-indexer.db
+*.db
+*.db-journal
