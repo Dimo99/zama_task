@@ -3,12 +3,13 @@ use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::types::{BlockNumberOrTag, Filter, Log};
 use alloy_primitives::{Address, B256, Bytes};
 use anyhow::Result;
+use regex::Regex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio_retry::strategy::{jitter, ExponentialBackoff};
 use tokio_retry::Retry;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 type AlloyFullProvider = FillProvider<
     alloy::providers::fillers::JoinFill<
@@ -130,7 +131,7 @@ impl RpcClient {
         .await
     }
 
-    pub async fn get_logs(
+    async fn get_logs_internal(
         &self,
         from_block: u64,
         to_block: u64,
@@ -158,5 +159,65 @@ impl RpcClient {
             }
         })
         .await
+    }
+
+    fn parse_max_results_error(error_str: &str) -> Option<(u64, u64)> {
+        let re = Regex::new(r"retry with the range (\d+)-(\d+)").ok()?;
+        let captures = re.captures(error_str)?;
+        
+        let from = captures.get(1)?.as_str().parse().ok()?;
+        let to = captures.get(2)?.as_str().parse().ok()?;
+        
+        Some((from, to))
+    }
+
+    pub async fn get_logs(
+        &self,
+        from_block: u64,
+        to_block: u64,
+        contract_address: Address,
+        topic0: B256,
+    ) -> Result<Vec<Log>> {
+        let mut all_logs = Vec::new();
+        let mut current_from = from_block;
+        
+        while current_from <= to_block {
+            let current_to = to_block;
+
+            match self.get_logs_internal(current_from, current_to, contract_address, topic0).await {
+                Ok(logs) => {
+                    all_logs.extend(logs);
+                    break;
+                }
+                Err(e) => {
+                    let error_str = e.to_string();
+
+                    if error_str.contains("exceeds max results") {
+                        if let Some((suggested_from, suggested_to)) = Self::parse_max_results_error(&error_str) {
+                            info!(
+                                "Hit max results limit for blocks {}-{}, splitting at block {}",
+                                current_from, current_to, suggested_to
+                            );
+                            
+                            let logs = self.get_logs_internal(
+                                suggested_from,
+                                suggested_to,
+                                contract_address,
+                                topic0
+                            ).await?;
+                            
+                            all_logs.extend(logs);
+                            current_from = suggested_to + 1;
+                          } else {
+                            return Err(e);
+                        }
+                    } else {
+                        return Err(e);
+                    }
+                }
+            }
+        }
+        
+        Ok(all_logs)
     }
 }

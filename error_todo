@@ -1,1 +1,0 @@
-2025-08-07T11:20:07.548617Z ERROR eth_indexer: Scanner error: server returned an error response: error code -32602: query exceeds max results 20000, retry with the range 12293466-12294428
