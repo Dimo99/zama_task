@@ -7,6 +7,7 @@ use regex::Regex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::time::timeout;
 use tokio_retry::strategy::{jitter, ExponentialBackoff};
 use tokio_retry::Retry;
 use tracing::{debug, info, warn};
@@ -27,6 +28,8 @@ type AlloyFullProvider = FillProvider<
     >,
     alloy::providers::RootProvider,
 >;
+
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(120); // 2 minutes timeout per request
 
 #[derive(Clone)]
 pub struct RpcClient {
@@ -99,14 +102,20 @@ impl RpcClient {
         Retry::spawn(self.get_retry_strategy(), move || {
             let client = client.clone();
             async move {
-                client.get_provider()
-                    .get_block_number()
-                    .await
-                    .map_err(|e| {
+                let provider = client.get_provider();
+                match timeout(REQUEST_TIMEOUT, provider.get_block_number()).await {
+                    Ok(Ok(block_number)) => Ok(block_number),
+                    Ok(Err(e)) => {
                         let error_str = e.to_string();
                         client.handle_error(&error_str);
-                        anyhow::anyhow!("{}", e)
-                    })
+                        Err(anyhow::anyhow!("{}", e))
+                    }
+                    Err(_) => {
+                        warn!("Request timeout after {} seconds, rotating provider", REQUEST_TIMEOUT.as_secs());
+                        client.rotate_provider();
+                        Err(anyhow::anyhow!("Request timeout after {} seconds", REQUEST_TIMEOUT.as_secs()))
+                    }
+                }
             }
         })
         .await
@@ -117,15 +126,24 @@ impl RpcClient {
         Retry::spawn(self.get_retry_strategy(), move || {
             let client = client.clone();
             async move {
-                client.get_provider()
+                let provider = client.get_provider();
+                let future = provider
                     .get_code_at(address)
-                    .block_id(BlockNumberOrTag::Number(block_number).into())
-                    .await
-                    .map_err(|e| {
+                    .block_id(BlockNumberOrTag::Number(block_number).into());
+                    
+                match timeout(REQUEST_TIMEOUT, future).await {
+                    Ok(Ok(result)) => Ok(result),
+                    Ok(Err(e)) => {
                         let error_str = e.to_string();
                         client.handle_error(&error_str);
-                        anyhow::anyhow!("{}", e)
-                    })
+                        Err(anyhow::anyhow!("{}", e))
+                    }
+                    Err(_) => {
+                        warn!("Request timeout after {} seconds, rotating provider", REQUEST_TIMEOUT.as_secs());
+                        client.rotate_provider();
+                        Err(anyhow::anyhow!("Request timeout after {} seconds", REQUEST_TIMEOUT.as_secs()))
+                    }
+                }
             }
         })
         .await
@@ -142,20 +160,29 @@ impl RpcClient {
         Retry::spawn(self.get_retry_strategy(), move || {
             let client = client.clone();
             async move {
+                let provider = client.get_provider();
                 let filter = Filter::new()
                     .address(contract_address)
                     .event_signature(topic0)
                     .from_block(from_block)
                     .to_block(to_block);
 
-                client.get_provider()
-                    .get_logs(&filter)
-                    .await
-                    .map_err(|e| {
+                match timeout(REQUEST_TIMEOUT, provider.get_logs(&filter)).await {
+                    Ok(Ok(logs)) => Ok(logs),
+                    Ok(Err(e)) => {
                         let error_str = e.to_string();
                         client.handle_error(&error_str);
-                        anyhow::anyhow!("{}", e)
-                    })
+                        Err(anyhow::anyhow!("{}", e))
+                    }
+                    Err(_) => {
+                        warn!(
+                            "Request timeout after {} seconds for blocks {}-{}, rotating provider", 
+                            REQUEST_TIMEOUT.as_secs(), from_block, to_block
+                        );
+                        client.rotate_provider();
+                        Err(anyhow::anyhow!("Request timeout after {} seconds", REQUEST_TIMEOUT.as_secs()))
+                    }
+                }
             }
         })
         .await
