@@ -83,18 +83,8 @@ impl RpcClient {
     }
 
     fn handle_error(&self, error_str: &str) {
-        // Check for rate limiting
-        if error_str.contains("429") || error_str.contains("rate") {
-            warn!("Rate limited on current RPC, rotating provider");
-            self.rotate_provider();
-        }
-        // Check for connection errors
-        else if error_str.contains("connection") || 
-                error_str.contains("timeout") ||
-                error_str.contains("refused") {
-            warn!("Connection error on current RPC, rotating provider");
-            self.rotate_provider();
-        }
+        warn!("RPC error: {}, rotating provider", error_str);
+        self.rotate_provider();
     }
 
     pub async fn get_latest_block(&self) -> Result<u64> {
