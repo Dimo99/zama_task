@@ -4,12 +4,12 @@ use alloy::rpc::types::{BlockNumberOrTag, Filter, Log};
 use alloy_primitives::{Address, B256, Bytes};
 use anyhow::Result;
 use regex::Regex;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::time::timeout;
-use tokio_retry::strategy::{jitter, ExponentialBackoff};
 use tokio_retry::Retry;
+use tokio_retry::strategy::{ExponentialBackoff, jitter};
 use tracing::{debug, info, warn};
 
 type AlloyFullProvider = FillProvider<
@@ -47,7 +47,8 @@ impl RpcClient {
 
         let mut providers = Vec::new();
         for url in rpc_urls {
-            let parsed_url = url.parse()
+            let parsed_url = url
+                .parse()
                 .map_err(|_| anyhow::anyhow!("Invalid RPC URL: {}", url))?;
             let provider: AlloyFullProvider = ProviderBuilder::new().connect_http(parsed_url);
             providers.push(provider);
@@ -65,7 +66,7 @@ impl RpcClient {
         let index = self.current_provider.load(Ordering::Relaxed) % self.providers.len();
         &self.providers[index]
     }
-    
+
     pub fn get_current_url(&self) -> &str {
         let index = self.current_provider.load(Ordering::Relaxed) % self.urls.len();
         &self.urls[index]
@@ -75,7 +76,7 @@ impl RpcClient {
         let current = self.current_provider.load(Ordering::Relaxed);
         let next = (current + 1) % self.providers.len();
         self.current_provider.store(next, Ordering::Relaxed);
-        
+
         if self.providers.len() > 1 {
             debug!("Rotating to RPC provider #{}", next);
         }
@@ -91,16 +92,25 @@ impl RpcClient {
 
     fn handle_error(&self, error_str: &str) {
         let current_url = self.get_current_url();
-        warn!("RPC error on {}: {}, rotating provider", current_url, error_str);
+        warn!(
+            "RPC error on {}: {}, rotating provider",
+            current_url, error_str
+        );
         self.rotate_provider();
     }
-    
+
     fn handle_timeout(&self) -> anyhow::Error {
         let current_url = self.get_current_url();
-        warn!("Request timeout after {} seconds on {}, rotating provider", 
-              REQUEST_TIMEOUT.as_secs(), current_url);
+        warn!(
+            "Request timeout after {} seconds on {}, rotating provider",
+            REQUEST_TIMEOUT.as_secs(),
+            current_url
+        );
         self.rotate_provider();
-        anyhow::anyhow!("Request timeout after {} seconds", REQUEST_TIMEOUT.as_secs())
+        anyhow::anyhow!(
+            "Request timeout after {} seconds",
+            REQUEST_TIMEOUT.as_secs()
+        )
     }
 
     pub async fn get_latest_block(&self) -> Result<u64> {
@@ -116,7 +126,7 @@ impl RpcClient {
                         client.handle_error(&error_str);
                         Err(anyhow::anyhow!("{}", e))
                     }
-                    Err(_) => Err(client.handle_timeout())
+                    Err(_) => Err(client.handle_timeout()),
                 }
             }
         })
@@ -132,7 +142,7 @@ impl RpcClient {
                 let future = provider
                     .get_code_at(address)
                     .block_id(BlockNumberOrTag::Number(block_number).into());
-                    
+
                 match timeout(REQUEST_TIMEOUT, future).await {
                     Ok(Ok(result)) => Ok(result),
                     Ok(Err(e)) => {
@@ -140,7 +150,7 @@ impl RpcClient {
                         client.handle_error(&error_str);
                         Err(anyhow::anyhow!("{}", e))
                     }
-                    Err(_) => Err(client.handle_timeout())
+                    Err(_) => Err(client.handle_timeout()),
                 }
             }
         })
@@ -166,26 +176,37 @@ impl RpcClient {
                     .to_block(to_block);
 
                 match timeout(REQUEST_TIMEOUT, provider.get_logs(&filter)).await {
-                    Ok(Ok(logs)) => Ok(logs),
+                    Ok(Ok(logs)) => Ok(Ok(logs)),
                     Ok(Err(e)) => {
                         let error_str = e.to_string();
-                        client.handle_error(&error_str);
-                        Err(anyhow::anyhow!("{}", e))
+
+                        if error_str.contains("exceeds max results") {
+                            debug!(
+                                "Max results exceeded for blocks {}-{}, will split range",
+                                from_block, to_block
+                            );
+                            // hack since we don't want to retry on this specific error
+                            Ok(Err(anyhow::anyhow!("{}", e)))
+                        } else {
+                            client.handle_error(&error_str);
+                            Err(anyhow::anyhow!("{}", e))
+                        }
                     }
-                    Err(_) => Err(client.handle_timeout())
+                    Err(_) => Err(client.handle_timeout()),
                 }
             }
         })
         .await
+        .and_then(|r| r)
     }
 
     fn parse_max_results_error(error_str: &str) -> Option<(u64, u64)> {
         let re = Regex::new(r"retry with the range (\d+)-(\d+)").ok()?;
         let captures = re.captures(error_str)?;
-        
+
         let from = captures.get(1)?.as_str().parse().ok()?;
         let to = captures.get(2)?.as_str().parse().ok()?;
-        
+
         Some((from, to))
     }
 
@@ -198,11 +219,14 @@ impl RpcClient {
     ) -> Result<Vec<Log>> {
         let mut all_logs = Vec::new();
         let mut current_from = from_block;
-        
+
         while current_from <= to_block {
             let current_to = to_block;
 
-            match self.get_logs_internal(current_from, current_to, contract_address, topic0).await {
+            match self
+                .get_logs_internal(current_from, current_to, contract_address, topic0)
+                .await
+            {
                 Ok(logs) => {
                     all_logs.extend(logs);
                     break;
@@ -211,22 +235,26 @@ impl RpcClient {
                     let error_str = e.to_string();
 
                     if error_str.contains("exceeds max results") {
-                        if let Some((suggested_from, suggested_to)) = Self::parse_max_results_error(&error_str) {
+                        if let Some((suggested_from, suggested_to)) =
+                            Self::parse_max_results_error(&error_str)
+                        {
                             info!(
                                 "Hit max results limit for blocks {}-{}, splitting at block {}",
                                 current_from, current_to, suggested_to
                             );
-                            
-                            let logs = self.get_logs_internal(
-                                suggested_from,
-                                suggested_to,
-                                contract_address,
-                                topic0
-                            ).await?;
-                            
+
+                            let logs = self
+                                .get_logs_internal(
+                                    suggested_from,
+                                    suggested_to,
+                                    contract_address,
+                                    topic0,
+                                )
+                                .await?;
+
                             all_logs.extend(logs);
                             current_from = suggested_to + 1;
-                          } else {
+                        } else {
                             return Err(e);
                         }
                     } else {
@@ -235,7 +263,7 @@ impl RpcClient {
                 }
             }
         }
-        
+
         Ok(all_logs)
     }
 }
