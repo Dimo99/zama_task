@@ -64,7 +64,7 @@ impl RpcClient {
         &self.providers[index]
     }
 
-    fn rotate_provider(&self) {
+    pub fn rotate_provider(&self) {
         let current = self.current_provider.load(Ordering::Relaxed);
         let next = (current + 1) % self.providers.len();
         self.current_provider.store(next, Ordering::Relaxed);

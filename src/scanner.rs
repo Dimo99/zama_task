@@ -93,6 +93,9 @@ impl Scanner {
                         let contract_address = self.contract_address;
                         let transfer_topic = self.transfer_topic;
                         
+                        // Rotate to next RPC for load distribution
+                        client.rotate_provider();
+                        
                         // Create the future and push it to FuturesOrdered
                         let fetch_future = async move {
                             let logs = client
