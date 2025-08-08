@@ -34,6 +34,7 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(120); // 2 minutes timeout
 #[derive(Clone)]
 pub struct RpcClient {
     providers: Vec<AlloyFullProvider>,
+    urls: Vec<String>,
     current_provider: Arc<AtomicUsize>,
     max_retries: usize,
 }
@@ -54,6 +55,7 @@ impl RpcClient {
 
         Ok(RpcClient {
             providers,
+            urls: rpc_urls.to_vec(),
             current_provider: Arc::new(AtomicUsize::new(0)),
             max_retries: 5,
         })
@@ -62,6 +64,11 @@ impl RpcClient {
     fn get_provider(&self) -> &AlloyFullProvider {
         let index = self.current_provider.load(Ordering::Relaxed) % self.providers.len();
         &self.providers[index]
+    }
+    
+    pub fn get_current_url(&self) -> &str {
+        let index = self.current_provider.load(Ordering::Relaxed) % self.urls.len();
+        &self.urls[index]
     }
 
     pub fn rotate_provider(&self) {
@@ -83,8 +90,17 @@ impl RpcClient {
     }
 
     fn handle_error(&self, error_str: &str) {
-        warn!("RPC error: {}, rotating provider", error_str);
+        let current_url = self.get_current_url();
+        warn!("RPC error on {}: {}, rotating provider", current_url, error_str);
         self.rotate_provider();
+    }
+    
+    fn handle_timeout(&self) -> anyhow::Error {
+        let current_url = self.get_current_url();
+        warn!("Request timeout after {} seconds on {}, rotating provider", 
+              REQUEST_TIMEOUT.as_secs(), current_url);
+        self.rotate_provider();
+        anyhow::anyhow!("Request timeout after {} seconds", REQUEST_TIMEOUT.as_secs())
     }
 
     pub async fn get_latest_block(&self) -> Result<u64> {
@@ -100,11 +116,7 @@ impl RpcClient {
                         client.handle_error(&error_str);
                         Err(anyhow::anyhow!("{}", e))
                     }
-                    Err(_) => {
-                        warn!("Request timeout after {} seconds, rotating provider", REQUEST_TIMEOUT.as_secs());
-                        client.rotate_provider();
-                        Err(anyhow::anyhow!("Request timeout after {} seconds", REQUEST_TIMEOUT.as_secs()))
-                    }
+                    Err(_) => Err(client.handle_timeout())
                 }
             }
         })
@@ -128,11 +140,7 @@ impl RpcClient {
                         client.handle_error(&error_str);
                         Err(anyhow::anyhow!("{}", e))
                     }
-                    Err(_) => {
-                        warn!("Request timeout after {} seconds, rotating provider", REQUEST_TIMEOUT.as_secs());
-                        client.rotate_provider();
-                        Err(anyhow::anyhow!("Request timeout after {} seconds", REQUEST_TIMEOUT.as_secs()))
-                    }
+                    Err(_) => Err(client.handle_timeout())
                 }
             }
         })
@@ -164,14 +172,7 @@ impl RpcClient {
                         client.handle_error(&error_str);
                         Err(anyhow::anyhow!("{}", e))
                     }
-                    Err(_) => {
-                        warn!(
-                            "Request timeout after {} seconds for blocks {}-{}, rotating provider", 
-                            REQUEST_TIMEOUT.as_secs(), from_block, to_block
-                        );
-                        client.rotate_provider();
-                        Err(anyhow::anyhow!("Request timeout after {} seconds", REQUEST_TIMEOUT.as_secs()))
-                    }
+                    Err(_) => Err(client.handle_timeout())
                 }
             }
         })

@@ -8,6 +8,7 @@ use alloy_primitives::{Address, B256};
 use anyhow::Result;
 use futures::stream::{FuturesOrdered, StreamExt};
 use std::time::Duration;
+use std::time::Instant;
 use tokio::sync::mpsc;
 use tokio::time::{interval, sleep};
 use tracing::{info, warn};
@@ -98,10 +99,13 @@ impl Scanner {
                         
                         // Create the future and push it to FuturesOrdered
                         let fetch_future = async move {
+                            let rpc_url = client.get_current_url().to_string();
+                            let start = Instant::now();
                             let logs = client
                                 .get_logs(from, to, contract_address, transfer_topic)
                                 .await?;
-                            Ok::<_, anyhow::Error>((from, to, logs))
+                            let elapsed = start.elapsed();
+                            Ok::<_, anyhow::Error>((from, to, logs, elapsed, rpc_url))
                         };
                         
                         pending_fetches.push_back(fetch_future);
@@ -111,9 +115,10 @@ impl Scanner {
                 
                 // Process results as they come in, in order
                 Some(result) = pending_fetches.next() => {
-                    let (from, to, logs) = result?;
+                    let (from, to, logs, elapsed, rpc_url) = result?;
                     
-                    info!("Processing {} logs for blocks {} to {}", logs.len(), from, to);
+                    info!("Processing {} logs for blocks {} to {} (took {:?} from {})", 
+                          logs.len(), from, to, elapsed.as_secs_f64(), rpc_url);
                     
                     let mut transfers = Vec::new();
                     
