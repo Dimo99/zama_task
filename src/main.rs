@@ -15,15 +15,17 @@ use tracing::{error, info};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .init();
+    tracing_subscriber::fmt().init();
 
     info!("Starting Ethereum Log Indexer");
 
     let config = Config::from_env()?;
     info!("Configuration loaded");
     info!("Contract address: {:?}", config.erc20_contract_address);
-    info!("RPC URLs: {} endpoint(s) configured", config.json_rpc_urls.len());
+    info!(
+        "RPC URLs: {} endpoint(s) configured",
+        config.json_rpc_urls.len()
+    );
 
     let db = Database::new(&config.database_url)?;
     info!("Database initialized");
@@ -32,7 +34,7 @@ async fn main() -> Result<()> {
     info!("RPC client connected");
 
     let mut scanner = Scanner::new(client, db, config.erc20_contract_address)?;
-    
+
     if let Err(e) = scanner.run().await {
         error!("Scanner error: {}", e);
         return Err(e);

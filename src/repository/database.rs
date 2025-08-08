@@ -9,10 +9,9 @@ pub struct Database {
 impl Database {
     pub fn new(db_path: &str) -> Result<Self> {
         let db_path = db_path.strip_prefix("sqlite:").unwrap_or(db_path);
-        let conn = Connection::open(db_path)
-            .context("Failed to open database")?;
-        
-        let db = Database { 
+        let conn = Connection::open(db_path).context("Failed to open database")?;
+
+        let db = Database {
             conn,
             db_path: db_path.to_string(),
         };

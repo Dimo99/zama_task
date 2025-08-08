@@ -21,7 +21,9 @@ impl Config {
         } else if let Ok(url) = std::env::var("JSON_RPC_URL") {
             vec![url]
         } else {
-            return Err(anyhow::anyhow!("Either JSON_RPC_URLS or JSON_RPC_URL must be set in .env"));
+            return Err(anyhow::anyhow!(
+                "Either JSON_RPC_URLS or JSON_RPC_URL must be set in .env"
+            ));
         };
 
         if json_rpc_urls.is_empty() {
@@ -34,8 +36,8 @@ impl Config {
         let erc20_contract_address = Address::from_str(&contract_address_str)
             .context("Invalid ERC20_CONTRACT_ADDRESS format")?;
 
-        let database_url = std::env::var("DATABASE_URL")
-            .unwrap_or_else(|_| "sqlite:./indexer.db".to_string());
+        let database_url =
+            std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:./indexer.db".to_string());
 
         Ok(Config {
             json_rpc_urls,

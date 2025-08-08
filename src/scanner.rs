@@ -1,7 +1,7 @@
 use crate::deployment::find_deployment_block;
 use crate::events::{Transfer as EventTransfer, decode_transfer_event};
-use crate::insertion_worker::{run_insertion_worker, TransferBatch};
-use crate::repository::{Database, Token, Transfer, TokenRepository};
+use crate::insertion_worker::{TransferBatch, run_insertion_worker};
+use crate::repository::{Database, Token, TokenRepository, Transfer};
 use crate::rpc::RpcClient;
 use alloy::sol_types::SolEvent;
 use alloy_primitives::{Address, B256};
@@ -44,28 +44,27 @@ impl Scanner {
             .unwrap_or(deployment_block);
 
         info!("Starting scan from block {}", last_processed_block);
-        
+
         // Create channel for sending batches to insertion worker
         let (tx, rx) = mpsc::channel::<TransferBatch>(10);
-        
+
         // Spawn insertion worker
         let db_clone = self.db.clone();
         let contract_address = self.contract_address;
-        let insertion_handle = tokio::spawn(async move {
-            run_insertion_worker(db_clone, contract_address, rx).await
-        });
+        let insertion_handle =
+            tokio::spawn(async move { run_insertion_worker(db_clone, contract_address, rx).await });
 
         // Set up interval for rate limiting
         let mut rate_limit_interval = interval(Duration::from_millis(RATE_LIMIT_DELAY_MS));
         rate_limit_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        
+
         // Track block ranges to fetch
         let mut next_block_to_fetch = last_processed_block + 1;
         let mut next_block_to_process = last_processed_block + 1;
-        
+
         // FuturesOrdered to maintain order of results
         let mut pending_fetches = FuturesOrdered::<_>::new();
-        
+
         loop {
             let latest_block = self.client.get_latest_block().await?;
 
@@ -86,17 +85,17 @@ impl Scanner {
                     if pending_fetches.len() < MAX_PENDING_REQUESTS && next_block_to_fetch <= latest_block {
                         let from = next_block_to_fetch;
                         let to = (from + BATCH_SIZE - 1).min(latest_block);
-                        
+
                         info!("Firing request for blocks {} to {}", from, to);
-                        
+
                         // Clone what we need for the async task
                         let client = self.client.clone();
                         let contract_address = self.contract_address;
                         let transfer_topic = self.transfer_topic;
-                        
+
                         // Rotate to next RPC for load distribution
                         client.rotate_provider();
-                        
+
                         // Create the future and push it to FuturesOrdered
                         let fetch_future = async move {
                             let rpc_url = client.get_current_url().to_string();
@@ -107,21 +106,21 @@ impl Scanner {
                             let elapsed = start.elapsed();
                             Ok::<_, anyhow::Error>((from, to, logs, elapsed, rpc_url))
                         };
-                        
+
                         pending_fetches.push_back(fetch_future);
                         next_block_to_fetch = to + 1;
                     }
                 }
-                
+
                 // Process results as they come in, in order
                 Some(result) = pending_fetches.next() => {
                     let (from, to, logs, elapsed, rpc_url) = result?;
-                    
-                    info!("Processing {} logs for blocks {} to {} (took {:?} from {})", 
+
+                    info!("Processing {} logs for blocks {} to {} (took {:?} from {})",
                           logs.len(), from, to, elapsed.as_secs_f64(), rpc_url);
-                    
+
                     let mut transfers = Vec::new();
-                    
+
                     for log in &logs {
                         match decode_transfer_event(log) {
                             Ok(event) => {
@@ -140,29 +139,29 @@ impl Scanner {
                             }
                         }
                     }
-                    
+
                     // Send batch to insertion worker
                     if !transfers.is_empty() || next_block_to_process <= to {
                         let batch = TransferBatch {
                             transfers,
                             end_block: to,
                         };
-                        
+
                         if tx.send(batch).await.is_err() {
                             warn!("Insertion worker has stopped, exiting...");
                             break;
                         }
                     }
-                    
+
                     next_block_to_process = to + 1;
                 }
             }
         }
-        
+
         // Close channel and wait for insertion worker to finish
         drop(tx);
         insertion_handle.await??;
-        
+
         Ok(())
     }
 
@@ -186,7 +185,7 @@ impl Scanner {
             deployment_block,
             last_processed_block: Some(deployment_block),
         };
-        
+
         let token_repo = TokenRepository::new(&self.db.conn);
         token_repo.insert(&token)?;
         Ok(deployment_block)
