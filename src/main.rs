@@ -30,10 +30,10 @@ async fn main() -> Result<()> {
     let db = Database::new(&config.database_url)?;
     info!("Database initialized");
 
-    let client = RpcClient::new(&config.json_rpc_urls)?;
+    let client = RpcClient::new(&config.json_rpc_urls, &config)?;
     info!("RPC client connected");
 
-    let mut scanner = Scanner::new(client, db, config.erc20_contract_address)?;
+    let mut scanner = Scanner::new(client, db, &config)?;
 
     if let Err(e) = scanner.run().await {
         error!("Scanner error: {}", e);

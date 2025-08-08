@@ -7,6 +7,10 @@ pub struct Config {
     pub json_rpc_urls: Vec<String>,
     pub erc20_contract_address: Address,
     pub database_url: String,
+    pub batch_size: u64,
+    pub rate_limit_delay_ms: u64,
+    pub max_pending_requests: usize,
+    pub request_timeout_secs: u64,
 }
 
 impl Config {
@@ -43,6 +47,22 @@ impl Config {
             json_rpc_urls,
             erc20_contract_address,
             database_url,
+            batch_size: std::env::var("BATCH_SIZE")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(1000),
+            rate_limit_delay_ms: std::env::var("RATE_LIMIT_DELAY_MS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(500),
+            max_pending_requests: std::env::var("MAX_PENDING_REQUESTS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(30),
+            request_timeout_secs: std::env::var("REQUEST_TIMEOUT_SECS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(120),
         })
     }
 }

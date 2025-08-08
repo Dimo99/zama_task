@@ -1,3 +1,4 @@
+use crate::config::Config;
 use crate::deployment::find_deployment_block;
 use crate::events::{Transfer as EventTransfer, decode_transfer_event};
 use crate::insertion_worker::{TransferBatch, run_insertion_worker};
@@ -13,25 +14,27 @@ use tokio::sync::mpsc;
 use tokio::time::{interval, sleep};
 use tracing::{info, warn};
 
-const BATCH_SIZE: u64 = 1000; // Most public RPCs allow up to 1k logs per request, empirically proven
-const RATE_LIMIT_DELAY_MS: u64 = 500; // 500ms between requests = 2 requests per second
-const MAX_PENDING_REQUESTS: usize = 30; // Maximum number of concurrent requests
-
 pub struct Scanner {
     client: RpcClient,
     db: Database,
     contract_address: Address,
     transfer_topic: B256,
+    batch_size: u64,
+    rate_limit_delay_ms: u64,
+    max_pending_requests: usize,
 }
 
 impl Scanner {
-    pub fn new(client: RpcClient, db: Database, contract_address: Address) -> Result<Self> {
+    pub fn new(client: RpcClient, db: Database, config: &Config) -> Result<Self> {
         let transfer_topic = EventTransfer::SIGNATURE_HASH;
         Ok(Scanner {
             client,
             db,
-            contract_address,
+            contract_address: config.erc20_contract_address,
             transfer_topic,
+            batch_size: config.batch_size,
+            rate_limit_delay_ms: config.rate_limit_delay_ms,
+            max_pending_requests: config.max_pending_requests,
         })
     }
 
@@ -55,7 +58,7 @@ impl Scanner {
             tokio::spawn(async move { run_insertion_worker(db_clone, contract_address, rx).await });
 
         // Set up interval for rate limiting
-        let mut rate_limit_interval = interval(Duration::from_millis(RATE_LIMIT_DELAY_MS));
+        let mut rate_limit_interval = interval(Duration::from_millis(self.rate_limit_delay_ms));
         rate_limit_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
         // Track block ranges to fetch
@@ -82,9 +85,9 @@ impl Scanner {
             tokio::select! {
                 // Fire new requests at the rate limit interval
                 _ = rate_limit_interval.tick() => {
-                    if pending_fetches.len() < MAX_PENDING_REQUESTS && next_block_to_fetch <= latest_block {
+                    if pending_fetches.len() < self.max_pending_requests && next_block_to_fetch <= latest_block {
                         let from = next_block_to_fetch;
-                        let to = (from + BATCH_SIZE - 1).min(latest_block);
+                        let to = (from + self.batch_size - 1).min(latest_block);
 
                         info!("Firing request for blocks {} to {}", from, to);
 

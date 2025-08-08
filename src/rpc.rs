@@ -1,3 +1,4 @@
+use crate::config::Config;
 use alloy::providers::fillers::FillProvider;
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::types::{BlockNumberOrTag, Filter, Log};
@@ -29,18 +30,17 @@ type AlloyFullProvider = FillProvider<
     alloy::providers::RootProvider,
 >;
 
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(120); // 2 minutes timeout per request
-
 #[derive(Clone)]
 pub struct RpcClient {
     providers: Vec<AlloyFullProvider>,
     urls: Vec<String>,
     current_provider: Arc<AtomicUsize>,
     max_retries: usize,
+    request_timeout: Duration,
 }
 
 impl RpcClient {
-    pub fn new(rpc_urls: &[String]) -> Result<Self> {
+    pub fn new(rpc_urls: &[String], config: &Config) -> Result<Self> {
         if rpc_urls.is_empty() {
             return Err(anyhow::anyhow!("At least one RPC URL must be provided"));
         }
@@ -59,6 +59,7 @@ impl RpcClient {
             urls: rpc_urls.to_vec(),
             current_provider: Arc::new(AtomicUsize::new(0)),
             max_retries: 5,
+            request_timeout: Duration::from_secs(config.request_timeout_secs),
         })
     }
 
@@ -103,13 +104,13 @@ impl RpcClient {
         let current_url = self.get_current_url();
         warn!(
             "Request timeout after {} seconds on {}, rotating provider",
-            REQUEST_TIMEOUT.as_secs(),
+            self.request_timeout.as_secs(),
             current_url
         );
         self.rotate_provider();
         anyhow::anyhow!(
             "Request timeout after {} seconds",
-            REQUEST_TIMEOUT.as_secs()
+            self.request_timeout.as_secs()
         )
     }
 
@@ -119,7 +120,7 @@ impl RpcClient {
             let client = client.clone();
             async move {
                 let provider = client.get_provider();
-                match timeout(REQUEST_TIMEOUT, provider.get_block_number()).await {
+                match timeout(client.request_timeout, provider.get_block_number()).await {
                     Ok(Ok(block_number)) => Ok(block_number),
                     Ok(Err(e)) => {
                         let error_str = e.to_string();
@@ -143,7 +144,7 @@ impl RpcClient {
                     .get_code_at(address)
                     .block_id(BlockNumberOrTag::Number(block_number).into());
 
-                match timeout(REQUEST_TIMEOUT, future).await {
+                match timeout(client.request_timeout, future).await {
                     Ok(Ok(result)) => Ok(result),
                     Ok(Err(e)) => {
                         let error_str = e.to_string();
@@ -175,7 +176,7 @@ impl RpcClient {
                     .from_block(from_block)
                     .to_block(to_block);
 
-                match timeout(REQUEST_TIMEOUT, provider.get_logs(&filter)).await {
+                match timeout(client.request_timeout, provider.get_logs(&filter)).await {
                     Ok(Ok(logs)) => Ok(Ok(logs)),
                     Ok(Err(e)) => {
                         let error_str = e.to_string();
