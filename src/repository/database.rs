@@ -1,3 +1,4 @@
+use super::balance_repository::BalanceRepository;
 use anyhow::{Context, Result};
 use rusqlite::Connection;
 use tracing::info;
@@ -135,8 +136,29 @@ impl Database {
             Ok(())
         })?;
 
-        // Future migrations would go here:
-        // self.apply_migration(2, |conn| { ... })?;
+        self.apply_migration(2, |conn| {
+            // Migration 2: Add denormalized balance table
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS balances (
+                    address TEXT PRIMARY KEY,
+                    balance_padded TEXT NOT NULL
+                )",
+                [],
+            )?;
+
+            // Create index on padded balance for efficient sorting
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_balances_padded ON balances(balance_padded DESC)",
+                [],
+            )?;
+
+            // Populate initial balances from existing finalized transfers
+            info!("Populating initial balances from existing transfers...");
+            let balance_repo = BalanceRepository::new(conn);
+            balance_repo.populate_from_transfers(conn)?;
+
+            Ok(())
+        })?;
 
         Ok(())
     }
