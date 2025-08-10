@@ -6,4 +6,6 @@ pub mod transfer_repository;
 pub use database::Database;
 pub use models::{Token, Transfer};
 pub use token_repository::TokenRepository;
-pub use transfer_repository::{BalanceInfo, TokenHolder, TransferRepository, TransferStats};
+pub use transfer_repository::{
+    BalanceInfo, TokenHolder, TransferRepository, TransferStats, TransferView,
+};

@@ -41,7 +41,6 @@ pub fn cmd_transfers(
     query: TransferQuery,
     format: &OutputFormat,
 ) -> Result<()> {
-    // Parse addresses if provided
     let from_address = query
         .from
         .as_ref()
@@ -58,14 +57,12 @@ pub fn cmd_transfers(
         })
         .transpose()?;
 
-    // Handle block or block_range
     let block_range = if let Some(block_num) = query.block {
         Some((block_num, block_num))
     } else {
         query.block_range
     };
 
-    // Check if at least one filter is provided
     if from_address.is_none() && to_address.is_none() && block_range.is_none() {
         return Err(anyhow::anyhow!(
             "Please specify at least one filter: --from, --to, --block, or --block-range"

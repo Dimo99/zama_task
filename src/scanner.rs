@@ -135,6 +135,8 @@ impl Scanner {
                                     to_address: event.to,
                                     value: event.value,
                                     block_number: log.block_number.unwrap(),
+                                    block_hash: log.block_hash.unwrap(),
+                                    is_finalized: false, // Will be updated by finality checker
                                 });
                             }
                             Err(e) => {
@@ -190,6 +192,7 @@ impl Scanner {
             address: self.contract_address,
             deployment_block,
             last_processed_block: Some(deployment_block),
+            last_processed_finalized_block: Some(deployment_block),
             name: metadata.name,
             symbol: metadata.symbol,
             decimals: metadata.decimals,

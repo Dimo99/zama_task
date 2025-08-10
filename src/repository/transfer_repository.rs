@@ -12,8 +12,8 @@ impl<'a> TransferRepository<'a> {
     // SQL queries as constants
     const INSERT_TRANSFER: &'static str = "INSERT OR IGNORE INTO transfers (
             transaction_hash, log_index, token_address, 
-            from_address, to_address, value, block_number
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";
+            from_address, to_address, value, block_number, block_hash, is_finalized
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)";
 
     const SELECT_INCOMING_VALUES: &'static str =
         "SELECT value FROM transfers WHERE to_address = ?1";
@@ -25,25 +25,31 @@ impl<'a> TransferRepository<'a> {
         SELECT from_address as address FROM transfers
     )";
 
-    const SELECT_TRANSFER: &'static str = "SELECT transaction_hash, log_index, token_address, from_address, to_address, value, block_number FROM transfers";
+    const SELECT_TRANSFER_VIEW: &'static str =
+        "SELECT transaction_hash, from_address, to_address, value, block_number FROM transfers";
 
     pub fn new(conn: &'a rusqlite::Connection) -> Self {
         Self { conn }
     }
 
+    fn transfer_params(transfer: &Transfer) -> Vec<Box<dyn ToSql>> {
+        vec![
+            Box::new(format!("{:?}", transfer.transaction_hash)),
+            Box::new(transfer.log_index),
+            Box::new(format!("{:?}", transfer.token_address)),
+            Box::new(format!("{:?}", transfer.from_address)),
+            Box::new(format!("{:?}", transfer.to_address)),
+            Box::new(transfer.value.to_string()),
+            Box::new(transfer.block_number),
+            Box::new(format!("{:?}", transfer.block_hash)),
+            Box::new(transfer.is_finalized),
+        ]
+    }
+
     pub fn insert(&self, transfer: &Transfer) -> Result<()> {
-        self.conn.execute(
-            Self::INSERT_TRANSFER,
-            params![
-                format!("{:?}", transfer.transaction_hash),
-                transfer.log_index,
-                format!("{:?}", transfer.token_address),
-                format!("{:?}", transfer.from_address),
-                format!("{:?}", transfer.to_address),
-                transfer.value.to_string(),
-                transfer.block_number,
-            ],
-        )?;
+        let params = Self::transfer_params(transfer);
+        self.conn
+            .execute(Self::INSERT_TRANSFER, params_from_iter(params))?;
         Ok(())
     }
 
@@ -55,15 +61,8 @@ impl<'a> TransferRepository<'a> {
             let mut stmt = tx.prepare(Self::INSERT_TRANSFER)?;
 
             for transfer in transfers {
-                let result = stmt.execute(params![
-                    format!("{:?}", transfer.transaction_hash),
-                    transfer.log_index,
-                    format!("{:?}", transfer.token_address),
-                    format!("{:?}", transfer.from_address),
-                    format!("{:?}", transfer.to_address),
-                    transfer.value.to_string(),
-                    transfer.block_number,
-                ])?;
+                let params = Self::transfer_params(transfer);
+                let result = stmt.execute(params_from_iter(params))?;
                 count += result;
             }
         }
@@ -79,7 +78,7 @@ impl<'a> TransferRepository<'a> {
         block_range: Option<(u64, u64)>,
         limit: usize,
         offset: usize,
-    ) -> Result<Vec<Transfer>> {
+    ) -> Result<Vec<TransferView>> {
         let mut conditions = Vec::new();
         let mut params: Vec<Box<dyn ToSql>> = Vec::new();
 
@@ -108,7 +107,7 @@ impl<'a> TransferRepository<'a> {
         address: &Address,
         limit: usize,
         offset: usize,
-    ) -> Result<Vec<Transfer>> {
+    ) -> Result<Vec<TransferView>> {
         let address_str = format!("{address:?}");
         let conditions = vec!["(from_address = ? OR to_address = ?)"];
         let params: Vec<Box<dyn ToSql>> =
@@ -196,8 +195,8 @@ impl<'a> TransferRepository<'a> {
         limit: usize,
         offset: usize,
         order_by: Option<&str>,
-    ) -> Result<Vec<Transfer>> {
-        let mut query = Self::SELECT_TRANSFER.to_string();
+    ) -> Result<Vec<TransferView>> {
+        let mut query = Self::SELECT_TRANSFER_VIEW.to_string();
 
         if !conditions.is_empty() {
             query.push_str(" WHERE ");
@@ -212,39 +211,35 @@ impl<'a> TransferRepository<'a> {
 
         let mut stmt = self.conn.prepare(&query)?;
         let transfers = stmt
-            .query_map(params_from_iter(params), Self::row_to_transfer)?
+            .query_map(params_from_iter(params), Self::row_to_transfer_view)?
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(transfers)
     }
 
-    fn row_to_transfer(row: &Row) -> rusqlite::Result<Transfer> {
+    fn row_to_transfer_view(row: &Row) -> rusqlite::Result<TransferView> {
         let transaction_hash = row.get::<_, String>(0)?.parse::<B256>().map_err(|e| {
             rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
         })?;
 
-        let token_address = Address::from_str(&row.get::<_, String>(2)?).map_err(|e| {
+        let from_address = Address::from_str(&row.get::<_, String>(1)?).map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(e))
+        })?;
+
+        let to_address = Address::from_str(&row.get::<_, String>(2)?).map_err(|e| {
             rusqlite::Error::FromSqlConversionFailure(2, rusqlite::types::Type::Text, Box::new(e))
         })?;
-        let from_address = Address::from_str(&row.get::<_, String>(3)?).map_err(|e| {
+
+        let value = U256::from_str(&row.get::<_, String>(3)?).map_err(|e| {
             rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Text, Box::new(e))
         })?;
-        let to_address = Address::from_str(&row.get::<_, String>(4)?).map_err(|e| {
-            rusqlite::Error::FromSqlConversionFailure(4, rusqlite::types::Type::Text, Box::new(e))
-        })?;
 
-        let value = U256::from_str(&row.get::<_, String>(5)?).map_err(|e| {
-            rusqlite::Error::FromSqlConversionFailure(5, rusqlite::types::Type::Text, Box::new(e))
-        })?;
-
-        Ok(Transfer {
+        Ok(TransferView {
             transaction_hash,
-            log_index: row.get(1)?,
-            token_address,
             from_address,
             to_address,
             value,
-            block_number: row.get(6)?,
+            block_number: row.get(4)?,
         })
     }
 
@@ -278,6 +273,15 @@ impl<'a> TransferRepository<'a> {
         }
         Ok(total)
     }
+}
+
+#[derive(Debug)]
+pub struct TransferView {
+    pub transaction_hash: B256,
+    pub from_address: Address,
+    pub to_address: Address,
+    pub value: U256,
+    pub block_number: u64,
 }
 
 #[derive(Debug)]

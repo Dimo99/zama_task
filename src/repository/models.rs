@@ -5,6 +5,7 @@ pub struct Token {
     pub address: Address,
     pub deployment_block: u64,
     pub last_processed_block: Option<u64>,
+    pub last_processed_finalized_block: Option<u64>,
     pub name: Option<String>,
     pub symbol: Option<String>,
     pub decimals: Option<u8>,
@@ -19,4 +20,6 @@ pub struct Transfer {
     pub to_address: Address,
     pub value: U256,
     pub block_number: u64,
+    pub block_hash: B256,
+    pub is_finalized: bool,
 }

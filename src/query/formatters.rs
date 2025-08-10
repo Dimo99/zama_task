@@ -1,4 +1,4 @@
-use crate::repository::{BalanceInfo, TokenHolder, Transfer, TransferStats};
+use crate::repository::{BalanceInfo, TokenHolder, TransferStats, TransferView};
 use alloy_primitives::utils::format_units;
 use comfy_table::{Cell, Table, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL};
 use csv::Writer;
@@ -22,7 +22,7 @@ impl From<&str> for OutputFormat {
 }
 
 pub fn format_transfers(
-    transfers: &[Transfer],
+    transfers: &[TransferView],
     decimals: Option<u8>,
     format: &OutputFormat,
 ) -> String {
@@ -33,7 +33,7 @@ pub fn format_transfers(
     }
 }
 
-fn format_transfers_table(transfers: &[Transfer], decimals: Option<u8>) -> String {
+fn format_transfers_table(transfers: &[TransferView], decimals: Option<u8>) -> String {
     if transfers.is_empty() {
         return "No transfers found.".to_string();
     }
@@ -68,7 +68,7 @@ fn format_transfers_table(transfers: &[Transfer], decimals: Option<u8>) -> Strin
     table.to_string()
 }
 
-fn format_transfers_json(transfers: &[Transfer], decimals: Option<u8>) -> String {
+fn format_transfers_json(transfers: &[TransferView], decimals: Option<u8>) -> String {
     let decimals = decimals.unwrap_or(18);
     let json_transfers: Vec<_> = transfers
         .iter()
@@ -78,7 +78,6 @@ fn format_transfers_json(transfers: &[Transfer], decimals: Option<u8>) -> String
             json!({
                 "block_number": t.block_number,
                 "transaction_hash": format!("{:?}", t.transaction_hash),
-                "log_index": t.log_index,
                 "from": format!("{:?}", t.from_address),
                 "to": format!("{:?}", t.to_address),
                 "value": formatted_value,
@@ -90,7 +89,7 @@ fn format_transfers_json(transfers: &[Transfer], decimals: Option<u8>) -> String
     serde_json::to_string_pretty(&json_transfers).unwrap_or_else(|_| "[]".to_string())
 }
 
-fn format_transfers_csv(transfers: &[Transfer], decimals: Option<u8>) -> String {
+fn format_transfers_csv(transfers: &[TransferView], decimals: Option<u8>) -> String {
     let decimals = decimals.unwrap_or(18);
     let mut wtr = Writer::from_writer(vec![]);
 
@@ -102,7 +101,6 @@ fn format_transfers_csv(transfers: &[Transfer], decimals: Option<u8>) -> String 
         "value",
         "value_wei",
         "transaction_hash",
-        "log_index",
     ]);
 
     // Write records
@@ -116,7 +114,6 @@ fn format_transfers_csv(transfers: &[Transfer], decimals: Option<u8>) -> String 
             &formatted_value,
             &transfer.value.to_string(),
             &format!("{:?}", transfer.transaction_hash),
-            &transfer.log_index.to_string(),
         ]);
     }
 
