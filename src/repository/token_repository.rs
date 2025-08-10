@@ -10,8 +10,8 @@ pub struct TokenRepository<'a> {
 impl<'a> TokenRepository<'a> {
     // SQL queries as constants for better maintainability
     const INSERT_TOKEN: &'static str =
-        "INSERT OR IGNORE INTO tokens (address, deployment_block, last_processed_block) 
-         VALUES (?1, ?2, ?3)";
+        "INSERT OR IGNORE INTO tokens (address, deployment_block, last_processed_block, name, symbol, decimals) 
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)";
 
     const UPDATE_LAST_PROCESSED_BLOCK: &'static str =
         "UPDATE tokens SET last_processed_block = ?1 WHERE address = ?2";
@@ -21,6 +21,8 @@ impl<'a> TokenRepository<'a> {
 
     const GET_LAST_PROCESSED_BLOCK: &'static str =
         "SELECT last_processed_block FROM tokens WHERE address = ?1";
+
+    const GET_TOKEN_DECIMALS: &'static str = "SELECT decimals FROM tokens WHERE address = ?1";
 
     pub fn new(conn: &'a rusqlite::Connection) -> Self {
         Self { conn }
@@ -32,7 +34,10 @@ impl<'a> TokenRepository<'a> {
             params![
                 format!("{:?}", token.address),
                 token.deployment_block,
-                token.last_processed_block.unwrap_or(token.deployment_block)
+                token.last_processed_block.unwrap_or(token.deployment_block),
+                token.name,
+                token.symbol,
+                token.decimals
             ],
         )?;
         Ok(())
@@ -68,5 +73,17 @@ impl<'a> TokenRepository<'a> {
             params![block_number, format!("{:?}", address)],
         )?;
         Ok(())
+    }
+
+    pub fn get_token_decimals(&self, address: &Address) -> Result<Option<u8>> {
+        let decimals: Option<u8> = self
+            .conn
+            .query_row(
+                Self::GET_TOKEN_DECIMALS,
+                params![format!("{:?}", address)],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(decimals)
     }
 }

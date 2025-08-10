@@ -1,5 +1,5 @@
 use crate::config::Config;
-use crate::deployment::find_deployment_block;
+use crate::deployment::{fetch_token_metadata, find_deployment_block};
 use crate::events::{Transfer as EventTransfer, decode_transfer_event};
 use crate::insertion_worker::{TransferBatch, run_insertion_worker};
 use crate::repository::{Database, Token, TokenRepository, Transfer};
@@ -128,12 +128,12 @@ impl Scanner {
                         match decode_transfer_event(log) {
                             Ok(event) => {
                                 transfers.push(Transfer {
-                                    transaction_hash: format!("{:?}", log.transaction_hash.unwrap()),
+                                    transaction_hash: log.transaction_hash.unwrap(),
                                     log_index: log.log_index.unwrap(),
                                     token_address: self.contract_address,
                                     from_address: event.from,
                                     to_address: event.to,
-                                    value: event.value.to_string(),
+                                    value: event.value,
                                     block_number: log.block_number.unwrap(),
                                 });
                             }
@@ -183,10 +183,16 @@ impl Scanner {
         let deployment_block =
             find_deployment_block(&self.client, self.contract_address, latest_block).await?;
 
+        // Fetch token metadata
+        let metadata = fetch_token_metadata(&self.client, self.contract_address).await?;
+
         let token = Token {
             address: self.contract_address,
             deployment_block,
             last_processed_block: Some(deployment_block),
+            name: metadata.name,
+            symbol: metadata.symbol,
+            decimals: metadata.decimals,
         };
 
         let token_repo = TokenRepository::new(&self.db.conn);

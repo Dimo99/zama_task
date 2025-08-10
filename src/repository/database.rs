@@ -25,7 +25,10 @@ impl Database {
             "CREATE TABLE IF NOT EXISTS tokens (
                 address TEXT PRIMARY KEY,
                 deployment_block INTEGER NOT NULL,
-                last_processed_block INTEGER
+                last_processed_block INTEGER,
+                name TEXT,
+                symbol TEXT,
+                decimals INTEGER
             )",
             [],
         )?;

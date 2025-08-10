@@ -2,6 +2,7 @@ use crate::config::Config;
 use alloy::providers::fillers::FillProvider;
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::types::{BlockNumberOrTag, Filter, Log};
+use alloy::sol_types::SolCall;
 use alloy_primitives::{Address, B256, Bytes};
 use anyhow::Result;
 use regex::Regex;
@@ -266,5 +267,27 @@ impl RpcClient {
         }
 
         Ok(all_logs)
+    }
+
+    pub async fn call_contract<C: SolCall>(&self, address: Address, call: C) -> Result<C::Return> {
+        let encoded = call.abi_encode();
+        let tx_request = alloy::rpc::types::TransactionRequest::default()
+            .to(address)
+            .input(encoded.into());
+
+        let provider = self.get_provider();
+        let result = timeout(self.request_timeout, async move {
+            provider
+                .call(tx_request)
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to call contract: {}", e))
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("Contract call timed out"))??;
+
+        let decoded = C::abi_decode_returns(&result)
+            .map_err(|e| anyhow::anyhow!("Failed to decode contract response: {}", e))?;
+
+        Ok(decoded)
     }
 }

@@ -1,16 +1,8 @@
-mod config;
-mod deployment;
-mod events;
-mod insertion_worker;
-mod repository;
-mod rpc;
-mod scanner;
-
 use anyhow::Result;
-use config::Config;
-use repository::Database;
-use rpc::RpcClient;
-use scanner::Scanner;
+use eth_indexer::config::Config;
+use eth_indexer::repository::Database;
+use eth_indexer::rpc::RpcClient;
+use eth_indexer::scanner::Scanner;
 use tracing::{error, info};
 
 #[tokio::main]

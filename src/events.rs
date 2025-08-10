@@ -4,6 +4,11 @@ use alloy::sol_types::SolEvent;
 
 sol! {
     event Transfer(address indexed from, address indexed to, uint256 value);
+
+    // ERC20 metadata functions
+    function name() external view returns (string memory);
+    function symbol() external view returns (string memory);
+    function decimals() external view returns (uint8);
 }
 
 pub fn decode_transfer_event(log: &Log) -> anyhow::Result<Transfer> {
