@@ -155,6 +155,8 @@ impl Database {
             .unwrap_or(false);
 
         if !already_applied {
+            info!("Applying migration {version}");
+
             migration(&self.conn)?;
 
             self.conn.execute(

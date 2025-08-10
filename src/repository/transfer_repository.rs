@@ -28,6 +28,12 @@ impl<'a> TransferRepository<'a> {
     const SELECT_TRANSFER_VIEW: &'static str =
         "SELECT transaction_hash, from_address, to_address, value, block_number FROM transfers";
 
+    const UPDATE_FINALITY_STATUS: &'static str =
+        "UPDATE transfers SET is_finalized = ?1 WHERE block_number >= ?2 AND block_number <= ?3";
+
+    const DELETE_TRANSFERS_FOR_BLOCK: &'static str =
+        "DELETE FROM transfers WHERE block_number = ?1";
+
     pub fn new(conn: &'a rusqlite::Connection) -> Self {
         Self { conn }
     }
@@ -272,6 +278,86 @@ impl<'a> TransferRepository<'a> {
                 .ok_or_else(|| anyhow::anyhow!("Overflow in sum calculation"))?;
         }
         Ok(total)
+    }
+
+    pub fn get_block_hashes_in_range(
+        &self,
+        from_block: u64,
+        to_block: u64,
+    ) -> Result<std::collections::HashMap<u64, B256>> {
+        let query = "SELECT DISTINCT block_number, block_hash 
+                     FROM transfers 
+                     WHERE block_number >= ? AND block_number <= ?";
+
+        let mut stmt = self.conn.prepare(query)?;
+        let mut block_hashes = std::collections::HashMap::new();
+
+        let rows = stmt.query_map(params![from_block, to_block], |row| {
+            let block_num: u64 = row.get(0)?;
+            let block_hash = B256::from_str(&row.get::<_, String>(1)?).map_err(|e| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    1,
+                    rusqlite::types::Type::Text,
+                    Box::new(e),
+                )
+            })?;
+            Ok((block_num, block_hash))
+        })?;
+
+        for row in rows {
+            let (block_num, block_hash) = row?;
+            if let Some(existing_hash) = block_hashes.get(&block_num) {
+                if existing_hash != &block_hash {
+                    anyhow::bail!(
+                        "Block {} has multiple distinct block hashes in DB ({:?} and {:?}), this should be impossible!",
+                        block_num,
+                        existing_hash,
+                        block_hash
+                    );
+                }
+            }
+            block_hashes.insert(block_num, block_hash);
+        }
+
+        Ok(block_hashes)
+    }
+
+    pub fn process_finality_batch(
+        &self,
+        blocks_to_delete: &[u64],
+        transfers_to_insert: &[Transfer],
+        mark_finalized_from: u64,
+        mark_finalized_to: u64,
+    ) -> Result<(usize, usize, usize)> {
+        let tx = self.conn.unchecked_transaction()?;
+
+        let mut deleted_count = 0;
+        let mut inserted_count = 0;
+
+        // Delete transfers for reorged blocks
+        for block_num in blocks_to_delete {
+            deleted_count += tx.execute(Self::DELETE_TRANSFERS_FOR_BLOCK, params![block_num])?;
+        }
+
+        // Insert new/fixed transfers
+        if !transfers_to_insert.is_empty() {
+            for transfer in transfers_to_insert {
+                let params = Self::transfer_params(transfer);
+                let result =
+                    tx.execute(Self::DELETE_TRANSFERS_FOR_BLOCK, params_from_iter(params))?;
+                inserted_count += result;
+            }
+        }
+
+        // Mark transfers as finalized
+        let finalized_count = tx.execute(
+            Self::UPDATE_FINALITY_STATUS,
+            params![true, mark_finalized_from, mark_finalized_to],
+        )?;
+
+        tx.commit()?;
+
+        Ok((deleted_count, inserted_count, finalized_count))
     }
 }
 

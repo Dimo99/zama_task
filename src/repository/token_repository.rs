@@ -24,6 +24,12 @@ impl<'a> TokenRepository<'a> {
 
     const GET_TOKEN_DECIMALS: &'static str = "SELECT decimals FROM tokens WHERE address = ?1";
 
+    const GET_LAST_PROCESSED_FINALIZED_BLOCK: &'static str =
+        "SELECT last_processed_finalized_block FROM tokens WHERE address = ?1";
+
+    const UPDATE_LAST_PROCESSED_FINALIZED_BLOCK: &'static str =
+        "UPDATE tokens SET last_processed_finalized_block = ?1 WHERE address = ?2";
+
     pub fn new(conn: &'a rusqlite::Connection) -> Self {
         Self { conn }
     }
@@ -85,5 +91,29 @@ impl<'a> TokenRepository<'a> {
             )
             .optional()?;
         Ok(decimals)
+    }
+
+    pub fn get_last_processed_finalized_block(&self, address: &Address) -> Result<Option<u64>> {
+        let block: Option<u64> = self
+            .conn
+            .query_row(
+                Self::GET_LAST_PROCESSED_FINALIZED_BLOCK,
+                params![format!("{:?}", address)],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(block)
+    }
+
+    pub fn update_last_processed_finalized_block(
+        &self,
+        address: &Address,
+        block_number: u64,
+    ) -> Result<()> {
+        self.conn.execute(
+            Self::UPDATE_LAST_PROCESSED_FINALIZED_BLOCK,
+            params![block_number, format!("{:?}", address)],
+        )?;
+        Ok(())
     }
 }

@@ -135,6 +135,37 @@ impl RpcClient {
         .await
     }
 
+    pub async fn get_finalized_block(&self) -> Result<u64> {
+        let client = self.clone();
+        Retry::spawn(self.get_retry_strategy(), move || {
+            let client = client.clone();
+            async move {
+                let provider = client.get_provider();
+                // Get the finalized block using the "finalized" tag
+                let finalized_tag = BlockNumberOrTag::Finalized;
+                match timeout(
+                    client.request_timeout,
+                    provider.get_block_by_number(finalized_tag),
+                )
+                .await
+                {
+                    Ok(Ok(Some(block))) => Ok(block.header.number),
+                    Ok(Ok(None)) => {
+                        client.handle_error("Finalized block not found");
+                        Err(anyhow::anyhow!("Finalized block not found"))
+                    }
+                    Ok(Err(e)) => {
+                        let error_str = e.to_string();
+                        client.handle_error(&error_str);
+                        Err(anyhow::anyhow!("{}", e))
+                    }
+                    Err(_) => Err(client.handle_timeout()),
+                }
+            }
+        })
+        .await
+    }
+
     pub async fn get_code_at_block(&self, address: Address, block_number: u64) -> Result<Bytes> {
         let client = self.clone();
         Retry::spawn(self.get_retry_strategy(), move || {

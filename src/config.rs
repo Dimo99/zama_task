@@ -11,6 +11,8 @@ pub struct Config {
     pub rate_limit_delay_ms: u64,
     pub max_pending_requests: usize,
     pub request_timeout_secs: u64,
+    pub finality_update_interval_secs: u64,
+    pub block_time_secs: u64,
 }
 
 impl Config {
@@ -63,6 +65,14 @@ impl Config {
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(120),
+            finality_update_interval_secs: std::env::var("FINALITY_UPDATE_INTERVAL_SECS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(384), // 32 slots * 12 seconds = 1 epoch
+            block_time_secs: std::env::var("BLOCK_TIME_SECS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(12), // Ethereum mainnet block time
         })
     }
 }
