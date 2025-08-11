@@ -15,16 +15,6 @@ impl<'a> TransferRepository<'a> {
             from_address, to_address, value, block_number, block_hash, is_finalized
         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)";
 
-    const SELECT_INCOMING_VALUES: &'static str =
-        "SELECT value FROM transfers WHERE to_address = ?1";
-    const SELECT_OUTGOING_VALUES: &'static str =
-        "SELECT value FROM transfers WHERE from_address = ?1";
-    const SELECT_UNIQUE_ADDRESSES: &'static str = "SELECT DISTINCT address FROM (
-        SELECT to_address as address FROM transfers
-        UNION
-        SELECT from_address as address FROM transfers
-    )";
-
     const SELECT_TRANSFER_VIEW: &'static str =
         "SELECT transaction_hash, from_address, to_address, value, block_number FROM transfers";
 
@@ -152,48 +142,6 @@ impl<'a> TransferRepository<'a> {
         })
     }
 
-    // TODO: Could benefit from denormalization
-    pub fn get_balance(&self, address: &Address) -> Result<BalanceInfo> {
-        let (balance, total_incoming, total_outgoing) = self.calculate_balance(address)?;
-        Ok(BalanceInfo {
-            balance,
-            total_incoming,
-            total_outgoing,
-        })
-    }
-
-    // TODO: detonormalize the database so this works on large tokens as USDC
-    pub fn get_top_holders(&self, limit: usize) -> Result<Vec<TokenHolder>> {
-        let mut stmt = self.conn.prepare(Self::SELECT_UNIQUE_ADDRESSES)?;
-        let addresses: Vec<Address> = stmt
-            .query_map([], |row| {
-                Address::from_str(&row.get::<_, String>(0)?).map_err(|e| {
-                    rusqlite::Error::FromSqlConversionFailure(
-                        0,
-                        rusqlite::types::Type::Text,
-                        Box::new(e),
-                    )
-                })
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-
-        let mut holders: Vec<TokenHolder> = Vec::new();
-
-        for address in addresses {
-            let (balance, _, _) = self.calculate_balance(&address)?;
-
-            if balance > U256::ZERO {
-                holders.push(TokenHolder { address, balance });
-            }
-        }
-
-        holders.sort_by(|a, b| b.balance.cmp(&a.balance));
-
-        holders.truncate(limit);
-
-        Ok(holders)
-    }
-
     fn execute_paginated_query(
         &self,
         conditions: Vec<&str>,
@@ -247,37 +195,6 @@ impl<'a> TransferRepository<'a> {
             value,
             block_number: row.get(4)?,
         })
-    }
-
-    fn calculate_balance(&self, address: &Address) -> Result<(U256, U256, U256)> {
-        let address_str = format!("{address:?}");
-        let mut stmt = self.conn.prepare(Self::SELECT_INCOMING_VALUES)?;
-        let incoming_values = stmt
-            .query_map(params![address_str], |row| row.get::<_, String>(0))?
-            .collect::<Result<Vec<_>, _>>()?;
-        let total_incoming = Self::sum_values(incoming_values)?;
-
-        let mut stmt = self.conn.prepare(Self::SELECT_OUTGOING_VALUES)?;
-        let outgoing_values = stmt
-            .query_map(params![address_str], |row| row.get::<_, String>(0))?
-            .collect::<Result<Vec<_>, _>>()?;
-        let total_outgoing = Self::sum_values(outgoing_values)?;
-
-        let balance = total_incoming.saturating_sub(total_outgoing);
-
-        Ok((balance, total_incoming, total_outgoing))
-    }
-
-    fn sum_values(values: Vec<String>) -> Result<U256> {
-        let mut total = U256::ZERO;
-        for value_str in values {
-            let value = U256::from_str(&value_str)
-                .map_err(|_| anyhow::anyhow!("Invalid value format in database: {}", value_str))?;
-            total = total
-                .checked_add(value)
-                .ok_or_else(|| anyhow::anyhow!("Overflow in sum calculation"))?;
-        }
-        Ok(total)
     }
 
     pub fn get_block_hashes_in_range(
@@ -374,17 +291,4 @@ pub struct TransferStats {
     pub unique_addresses: usize,
     pub earliest_block: Option<u64>,
     pub latest_block: Option<u64>,
-}
-
-#[derive(Debug)]
-pub struct BalanceInfo {
-    pub balance: U256,
-    pub total_incoming: U256,
-    pub total_outgoing: U256,
-}
-
-#[derive(Debug)]
-pub struct TokenHolder {
-    pub address: Address,
-    pub balance: U256,
 }

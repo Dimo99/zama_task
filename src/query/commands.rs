@@ -1,13 +1,13 @@
 use crate::query::formatters::{
     OutputFormat, format_balance, format_stats, format_top_holders, format_transfers,
 };
-use crate::repository::{TokenRepository, TransferRepository};
+use crate::repository::{BalanceRepository, TokenRepository, TransferRepository};
 use alloy_primitives::Address;
 use anyhow::Result;
 use std::str::FromStr;
 
 pub fn cmd_balance(
-    transfer_repo: &TransferRepository,
+    balance_repo: &BalanceRepository,
     token_repo: &TokenRepository,
     token_address: &Address,
     address: &str,
@@ -16,7 +16,7 @@ pub fn cmd_balance(
     let address = Address::from_str(address)
         .map_err(|_| anyhow::anyhow!("Invalid address format: {}", address))?;
 
-    let balance_info = transfer_repo.get_balance(&address)?;
+    let balance_info = balance_repo.get_balance(&address)?;
     let decimals = token_repo.get_token_decimals(token_address)?;
     let output = format_balance(balance_info, decimals, format);
     println!("{output}");
@@ -85,13 +85,13 @@ pub fn cmd_transfers(
 }
 
 pub fn cmd_top_holders(
-    transfer_repo: &TransferRepository,
+    balance_repo: &BalanceRepository,
     token_repo: &TokenRepository,
     token_address: &Address,
     count: usize,
     format: &OutputFormat,
 ) -> Result<()> {
-    let holders = transfer_repo.get_top_holders(count)?;
+    let holders = balance_repo.get_top_holders(count)?;
     let decimals = token_repo.get_token_decimals(token_address)?;
     let output = format_top_holders(holders, decimals, format);
     println!("{output}");

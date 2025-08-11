@@ -128,10 +128,6 @@ pub fn format_balance(
     let decimals = decimals.unwrap_or(18); // Default to 18 decimals for most ERC20 tokens
     let balance_formatted = format_units(balance_info.balance, decimals)
         .unwrap_or_else(|_| balance_info.balance.to_string());
-    let incoming_formatted = format_units(balance_info.total_incoming, decimals)
-        .unwrap_or_else(|_| balance_info.total_incoming.to_string());
-    let outgoing_formatted = format_units(balance_info.total_outgoing, decimals)
-        .unwrap_or_else(|_| balance_info.total_outgoing.to_string());
 
     match format {
         OutputFormat::Table => {
@@ -146,25 +142,11 @@ pub fn format_balance(
                 Cell::new(&balance_formatted),
                 Cell::new(balance_info.balance.to_string()),
             ]);
-            table.add_row(vec![
-                Cell::new("Total Incoming"),
-                Cell::new(&incoming_formatted),
-                Cell::new(balance_info.total_incoming.to_string()),
-            ]);
-            table.add_row(vec![
-                Cell::new("Total Outgoing"),
-                Cell::new(&outgoing_formatted),
-                Cell::new(balance_info.total_outgoing.to_string()),
-            ]);
             table.to_string()
         }
         OutputFormat::Json => json!({
             "balance": balance_formatted,
             "balance_wei": balance_info.balance.to_string(),
-            "total_incoming": incoming_formatted,
-            "total_incoming_wei": balance_info.total_incoming.to_string(),
-            "total_outgoing": outgoing_formatted,
-            "total_outgoing_wei": balance_info.total_outgoing.to_string(),
         })
         .to_string(),
         OutputFormat::Csv => {
@@ -174,16 +156,6 @@ pub fn format_balance(
                 "balance",
                 &balance_formatted,
                 &balance_info.balance.to_string(),
-            ]);
-            let _ = wtr.write_record([
-                "total_incoming",
-                &incoming_formatted,
-                &balance_info.total_incoming.to_string(),
-            ]);
-            let _ = wtr.write_record([
-                "total_outgoing",
-                &outgoing_formatted,
-                &balance_info.total_outgoing.to_string(),
             ]);
             String::from_utf8(wtr.into_inner().unwrap_or_default()).unwrap_or_default()
         }

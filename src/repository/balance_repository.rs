@@ -7,6 +7,17 @@ use tracing::info;
 
 use crate::repository::Transfer;
 
+#[derive(Debug)]
+pub struct BalanceInfo {
+    pub balance: U256,
+}
+
+#[derive(Debug)]
+pub struct TokenHolder {
+    pub address: Address,
+    pub balance: U256,
+}
+
 pub struct BalanceRepository<'a> {
     conn: &'a Connection,
 }
@@ -88,7 +99,7 @@ impl<'a> BalanceRepository<'a> {
                 None => U256::ZERO,
             };
 
-            balance = balance.wrapping_add(*increase);
+            balance = balance.saturating_add(*increase);
 
             if let Some(decrease) = balance_decreases.get(address) {
                 balance = balance.saturating_sub(*decrease);
@@ -135,7 +146,7 @@ impl<'a> BalanceRepository<'a> {
                         U256::from_str(trimmed)?
                     };
 
-                    let new_balance = balance.wrapping_sub(decrease);
+                    let new_balance = balance.saturating_sub(decrease);
 
                     if new_balance > U256::ZERO {
                         let padded = Self::pad_balance(&new_balance);
@@ -188,7 +199,7 @@ impl<'a> BalanceRepository<'a> {
             for value_str in incoming_values {
                 let value = U256::from_str(&value_str)
                     .map_err(|_| anyhow::anyhow!("Invalid value format: {}", value_str))?;
-                total_incoming = total_incoming.wrapping_add(value);
+                total_incoming = total_incoming.saturating_add(value);
             }
 
             // Get outgoing values
@@ -203,7 +214,7 @@ impl<'a> BalanceRepository<'a> {
             for value_str in outgoing_values {
                 let value = U256::from_str(&value_str)
                     .map_err(|_| anyhow::anyhow!("Invalid value format: {}", value_str))?;
-                total_outgoing = total_outgoing.wrapping_add(value);
+                total_outgoing = total_outgoing.saturating_add(value);
             }
 
             let balance = total_incoming.saturating_sub(total_outgoing);
@@ -248,8 +259,8 @@ impl<'a> BalanceRepository<'a> {
         Ok(())
     }
 
-    /// Get balance for an address (returns U256::ZERO if not found)
-    pub fn get_balance(&self, address: &Address) -> Result<U256> {
+    /// Get balance for an address (returns BalanceInfo)
+    pub fn get_balance(&self, address: &Address) -> Result<BalanceInfo> {
         let address_str = format!("{address:?}");
 
         let padded: Option<String> = self
@@ -261,23 +272,25 @@ impl<'a> BalanceRepository<'a> {
             )
             .ok();
 
-        match padded {
+        let balance = match padded {
             Some(p) => {
                 // Remove leading zeros and parse
                 let trimmed = p.trim_start_matches('0');
                 if trimmed.is_empty() {
-                    Ok(U256::ZERO)
+                    U256::ZERO
                 } else {
                     U256::from_str(trimmed)
-                        .map_err(|_| anyhow::anyhow!("Invalid balance format in database"))
+                        .map_err(|_| anyhow::anyhow!("Invalid balance format in database"))?
                 }
             }
-            None => Ok(U256::ZERO),
-        }
+            None => U256::ZERO,
+        };
+
+        Ok(BalanceInfo { balance })
     }
 
     /// Get top holders sorted by balance
-    pub fn get_top_holders(&self, limit: usize) -> Result<Vec<(Address, U256)>> {
+    pub fn get_top_holders(&self, limit: usize) -> Result<Vec<TokenHolder>> {
         let mut stmt = self.conn.prepare(
             "SELECT address, balance_padded FROM balances 
              ORDER BY balance_padded DESC 
@@ -311,7 +324,7 @@ impl<'a> BalanceRepository<'a> {
                     })?
                 };
 
-                Ok((address, balance))
+                Ok(TokenHolder { address, balance })
             })?
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -351,11 +364,11 @@ impl<'a> BalanceRepository<'a> {
 
             // Subtract from sender
             let from_balance = balances.entry(from_address).or_insert(U256::ZERO);
-            *from_balance = from_balance.wrapping_sub(value);
+            *from_balance = from_balance.saturating_sub(value);
 
             // Add to receiver
             let to_balance = balances.entry(to_address).or_insert(U256::ZERO);
-            *to_balance = to_balance.wrapping_add(value);
+            *to_balance = to_balance.saturating_add(value);
 
             count += 1;
             if count % 100_000 == 0 {
