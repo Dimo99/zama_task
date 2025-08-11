@@ -166,28 +166,3 @@ block_number,from,to,value,transaction_hash,log_index
 # Get latest transfers (assuming latest block is around 18000000)
 ./target/release/query transfers --block-range 17999000 18000000
 ```
-
-## Performance Notes
-
-- The database has indexes on `from_address`, `to_address`, and `block_number` for fast queries
-- Use pagination (`--limit` and `--offset`) for large result sets
-- The `top-holders` query may be slow for large databases as it needs to aggregate all transfers
-
-## Troubleshooting
-
-### Database Not Found
-If you get a database error, make sure:
-1. The indexer has run and created the database
-2. You're specifying the correct path with `-d` flag
-3. The database file has read permissions
-
-### Invalid Address Format
-Addresses must be in hexadecimal format starting with `0x`:
-- ✅ Correct: `0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1`
-- ❌ Wrong: `742d35Cc6634C0532925a3b844Bc9e7595f0bEb1` (missing 0x)
-
-### Large Result Sets
-For queries returning many results:
-1. Use pagination with `--limit` and `--offset`
-2. Export to CSV or JSON for processing in other tools
-3. Consider filtering by block range to reduce results
