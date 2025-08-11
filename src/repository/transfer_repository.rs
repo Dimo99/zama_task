@@ -334,17 +334,15 @@ impl<'a> TransferRepository<'a> {
         let mut deleted_count = 0;
         let mut inserted_count = 0;
 
-        // Delete transfers for reorged blocks
         for block_num in blocks_to_delete {
             deleted_count += tx.execute(Self::DELETE_TRANSFERS_FOR_BLOCK, params![block_num])?;
         }
 
-        // Insert new/fixed transfers
         if !transfers_to_insert.is_empty() {
+            let mut stmt = tx.prepare(Self::INSERT_TRANSFER)?;
             for transfer in transfers_to_insert {
                 let params = Self::transfer_params(transfer);
-                let result =
-                    tx.execute(Self::DELETE_TRANSFERS_FOR_BLOCK, params_from_iter(params))?;
+                let result = stmt.execute(params_from_iter(params))?;
                 inserted_count += result;
             }
         }

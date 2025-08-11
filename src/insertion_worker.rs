@@ -1,4 +1,6 @@
-use crate::repository::{Database, TokenRepository, Transfer, TransferRepository};
+use crate::repository::{
+    BalanceRepository, Database, TokenRepository, Transfer, TransferRepository,
+};
 use alloy_primitives::Address;
 use anyhow::Result;
 use std::time::Instant;
@@ -32,6 +34,22 @@ fn process_batch(db: Database, contract_address: Address, batch: TransferBatch) 
         let transfer_repo = TransferRepository::new(&db.conn);
         let inserted = transfer_repo.insert_batch(&batch.transfers)?;
         info!("Inserted {} transfers in {:?}", inserted, start.elapsed());
+
+        // Apply incremental balance updates for finalized transfers
+        let finalized_transfers: Vec<&Transfer> =
+            batch.transfers.iter().filter(|t| t.is_finalized).collect();
+
+        if !finalized_transfers.is_empty() {
+            let balance_repo = BalanceRepository::new(&db.conn);
+            // Convert references to owned for the apply_transfers method
+            let transfers_to_apply: Vec<Transfer> =
+                finalized_transfers.into_iter().cloned().collect();
+            balance_repo.apply_transfers(&transfers_to_apply)?;
+            info!(
+                "Applied balance updates for {} finalized transfers",
+                transfers_to_apply.len()
+            );
+        }
     }
 
     // Update last processed block after successful insertion

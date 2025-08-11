@@ -2,7 +2,9 @@ use crate::config::Config;
 use crate::deployment::{fetch_token_metadata, find_deployment_block};
 use crate::events::{Transfer as EventTransfer, decode_transfer_event};
 use crate::insertion_worker::{TransferBatch, run_insertion_worker};
-use crate::repository::{Database, Token, TokenRepository, Transfer, TransferRepository};
+use crate::repository::{
+    BalanceRepository, Database, Token, TokenRepository, Transfer, TransferRepository,
+};
 use crate::rpc::RpcClient;
 use alloy::sol_types::SolEvent;
 use alloy_primitives::{Address, B256};
@@ -363,6 +365,17 @@ impl Scanner {
                 info!(
                     "Marked {} transfers as finalized in blocks {}-{}",
                     finalized, current_from, current_to
+                );
+            }
+
+            // Apply balance updates - transfers_to_insert are all finalized
+            // and chain_transfers contains all transfers in the range (including those just marked as finalized)
+            if !chain_transfers.is_empty() {
+                let balance_repo = BalanceRepository::new(&self.db.conn);
+                balance_repo.apply_transfers(&chain_transfers)?;
+                info!(
+                    "Applied balance updates for {} finalized transfers",
+                    chain_transfers.len()
                 );
             }
 

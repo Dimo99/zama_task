@@ -5,6 +5,8 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use tracing::info;
 
+use crate::repository::Transfer;
+
 pub struct BalanceRepository<'a> {
     conn: &'a Connection,
 }
@@ -29,6 +31,199 @@ impl<'a> BalanceRepository<'a> {
             "INSERT OR REPLACE INTO balances (address, balance_padded) VALUES (?1, ?2)",
             params![address_str, padded],
         )?;
+
+        Ok(())
+    }
+
+    /// Apply incremental balance updates from new transfers
+    /// Much more efficient than recalculating from scratch
+    pub fn apply_transfers(&self, transfers: &[Transfer]) -> Result<()> {
+        if transfers.is_empty() {
+            return Ok(());
+        }
+
+        let mut balance_increases: HashMap<Address, U256> = HashMap::new();
+        let mut balance_decreases: HashMap<Address, U256> = HashMap::new();
+
+        for transfer in transfers {
+            if !transfer.is_finalized {
+                continue;
+            }
+
+            *balance_increases
+                .entry(transfer.to_address)
+                .or_insert(U256::ZERO) += transfer.value;
+
+            *balance_decreases
+                .entry(transfer.from_address)
+                .or_insert(U256::ZERO) += transfer.value;
+        }
+
+        let tx = self.conn.unchecked_transaction()?;
+
+        // TODO: Optimize by batch fetching all current balances in a single query
+        // instead of individual queries per address. For batches with many addresses,
+        // we could use WHERE address IN (?, ?, ...) with chunking to respect SQL limits.
+        // Current approach is fine for typical batches but could be improved for large ones.
+        for (address, increase) in &balance_increases {
+            let address_str = format!("{address:?}");
+
+            let current: Option<String> = tx
+                .query_row(
+                    "SELECT balance_padded FROM balances WHERE address = ?1",
+                    params![&address_str],
+                    |row| row.get(0),
+                )
+                .ok();
+
+            let mut balance = match current {
+                Some(padded) => {
+                    let trimmed = padded.trim_start_matches('0');
+                    if trimmed.is_empty() {
+                        U256::ZERO
+                    } else {
+                        U256::from_str(trimmed)?
+                    }
+                }
+                None => U256::ZERO,
+            };
+
+            balance = balance.wrapping_add(*increase);
+
+            if let Some(decrease) = balance_decreases.get(address) {
+                balance = balance.saturating_sub(*decrease);
+            }
+
+            if balance > U256::ZERO {
+                let padded = Self::pad_balance(&balance);
+                tx.execute(
+                    "INSERT OR REPLACE INTO balances (address, balance_padded) VALUES (?1, ?2)",
+                    params![address_str, padded],
+                )?;
+            } else {
+                // Remove zero balances
+                tx.execute(
+                    "DELETE FROM balances WHERE address = ?1",
+                    params![address_str],
+                )?;
+            }
+        }
+
+        // Handle addresses that only sent (not received)
+        for (address, decrease) in balance_decreases {
+            if balance_increases.contains_key(&address) {
+                continue; // Already handled above
+            }
+
+            let address_str = format!("{address:?}");
+
+            // Get current balance
+            let current: Option<String> = tx
+                .query_row(
+                    "SELECT balance_padded FROM balances WHERE address = ?1",
+                    params![&address_str],
+                    |row| row.get(0),
+                )
+                .ok();
+
+            match current {
+                Some(padded) => {
+                    let trimmed = padded.trim_start_matches('0');
+                    let balance = if trimmed.is_empty() {
+                        U256::ZERO
+                    } else {
+                        U256::from_str(trimmed)?
+                    };
+
+                    let new_balance = balance.wrapping_sub(decrease);
+
+                    if new_balance > U256::ZERO {
+                        let padded = Self::pad_balance(&new_balance);
+                        tx.execute(
+                            "INSERT OR REPLACE INTO balances (address, balance_padded) VALUES (?1, ?2)",
+                            params![address_str, padded],
+                        )?;
+                    } else {
+                        tx.execute(
+                            "DELETE FROM balances WHERE address = ?1",
+                            params![address_str],
+                        )?;
+                    }
+                }
+                None => {
+                    // Address has no balance but is sending - this shouldn't happen with finalized transfers
+                }
+            }
+        }
+
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Update balances for addresses affected by new finalized transfers
+    /// This recalculates balances from scratch for the given addresses
+    pub fn update_balances_for_addresses(
+        &self,
+        conn: &Connection,
+        addresses: &[Address],
+    ) -> Result<()> {
+        if addresses.is_empty() {
+            return Ok(());
+        }
+
+        let mut balances = HashMap::new();
+
+        for address in addresses {
+            let address_str = format!("{address:?}");
+
+            // Calculate balance from all finalized transfers
+            // Get incoming values
+            let mut stmt = conn
+                .prepare("SELECT value FROM transfers WHERE to_address = ? AND is_finalized = 1")?;
+            let incoming_values = stmt
+                .query_map(params![address_str], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+
+            let mut total_incoming = U256::ZERO;
+            for value_str in incoming_values {
+                let value = U256::from_str(&value_str)
+                    .map_err(|_| anyhow::anyhow!("Invalid value format: {}", value_str))?;
+                total_incoming = total_incoming.wrapping_add(value);
+            }
+
+            // Get outgoing values
+            let mut stmt = conn.prepare(
+                "SELECT value FROM transfers WHERE from_address = ? AND is_finalized = 1",
+            )?;
+            let outgoing_values = stmt
+                .query_map(params![address_str], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+
+            let mut total_outgoing = U256::ZERO;
+            for value_str in outgoing_values {
+                let value = U256::from_str(&value_str)
+                    .map_err(|_| anyhow::anyhow!("Invalid value format: {}", value_str))?;
+                total_outgoing = total_outgoing.wrapping_add(value);
+            }
+
+            let balance = total_incoming.saturating_sub(total_outgoing);
+
+            // Only store non-zero balances
+            if balance > U256::ZERO {
+                balances.insert(*address, balance);
+            } else {
+                // Delete zero balances
+                self.conn.execute(
+                    "DELETE FROM balances WHERE address = ?",
+                    params![address_str],
+                )?;
+            }
+        }
+
+        // Update all non-zero balances
+        if !balances.is_empty() {
+            self.update_balances_batch(&balances)?;
+        }
 
         Ok(())
     }
