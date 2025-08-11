@@ -2,7 +2,8 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use eth_indexer::config::Config;
 use eth_indexer::query::commands::{
-    TransferQuery, cmd_address_history, cmd_balance, cmd_stats, cmd_top_holders, cmd_transfers,
+    AddressHistoryQuery, TransferQuery, cmd_address_history, cmd_balance, cmd_stats,
+    cmd_top_holders, cmd_transfers,
 };
 use eth_indexer::query::formatters::OutputFormat;
 use eth_indexer::repository::{BalanceRepository, Database, TokenRepository, TransferRepository};
@@ -36,6 +37,9 @@ enum Commands {
         #[arg(long, num_args = 2, value_names = ["START", "END"])]
         block_range: Option<Vec<u64>>,
 
+        #[arg(long, default_value = "false")]
+        finalized: bool,
+
         #[arg(long, default_value = "100")]
         limit: usize,
 
@@ -49,6 +53,8 @@ enum Commands {
     Stats,
     AddressHistory {
         address: String,
+        #[arg(long, default_value = "false")]
+        finalized: bool,
         #[arg(long, default_value = "100")]
         limit: usize,
         #[arg(long, default_value = "0")]
@@ -78,6 +84,7 @@ async fn main() -> Result<()> {
             to,
             block,
             block_range,
+            finalized,
             limit,
             offset,
         } => {
@@ -87,6 +94,7 @@ async fn main() -> Result<()> {
                 to,
                 block,
                 block_range: range,
+                finalized,
                 limit,
                 offset,
             };
@@ -100,18 +108,17 @@ async fn main() -> Result<()> {
         }
         Commands::AddressHistory {
             address,
+            finalized,
             limit,
             offset,
         } => {
-            cmd_address_history(
-                &transfer_repo,
-                &token_repo,
-                token_address,
-                &address,
+            let query = AddressHistoryQuery {
+                address,
+                finalized,
                 limit,
                 offset,
-                &format,
-            )?;
+            };
+            cmd_address_history(&transfer_repo, &token_repo, token_address, query, &format)?;
         }
     }
 

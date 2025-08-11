@@ -72,6 +72,7 @@ impl<'a> TransferRepository<'a> {
         from_address: Option<&Address>,
         to_address: Option<&Address>,
         block_range: Option<(u64, u64)>,
+        finalized_only: bool,
         limit: usize,
         offset: usize,
     ) -> Result<Vec<TransferView>> {
@@ -95,19 +96,30 @@ impl<'a> TransferRepository<'a> {
             params.push(Box::new(end));
         }
 
+        if finalized_only {
+            conditions.push("is_finalized = ?");
+            params.push(Box::new(true));
+        }
+
         self.execute_paginated_query(conditions, params, limit, offset, None)
     }
 
     pub fn get_address_history(
         &self,
         address: &Address,
+        finalized_only: bool,
         limit: usize,
         offset: usize,
     ) -> Result<Vec<TransferView>> {
         let address_str = format!("{address:?}");
-        let conditions = vec!["(from_address = ? OR to_address = ?)"];
-        let params: Vec<Box<dyn ToSql>> =
+        let mut conditions = vec!["(from_address = ? OR to_address = ?)"];
+        let mut params: Vec<Box<dyn ToSql>> =
             vec![Box::new(address_str.clone()), Box::new(address_str)];
+
+        if finalized_only {
+            conditions.push("is_finalized = ?");
+            params.push(Box::new(true));
+        }
 
         self.execute_paginated_query(conditions, params, limit, offset, None)
     }

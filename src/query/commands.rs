@@ -30,6 +30,7 @@ pub struct TransferQuery {
     pub to: Option<String>,
     pub block: Option<u64>,
     pub block_range: Option<(u64, u64)>,
+    pub finalized: bool,
     pub limit: usize,
     pub offset: usize,
 }
@@ -73,6 +74,7 @@ pub fn cmd_transfers(
         from_address.as_ref(),
         to_address.as_ref(),
         block_range,
+        query.finalized,
         query.limit,
         query.offset,
     )?;
@@ -107,19 +109,25 @@ pub fn cmd_stats(repo: &TransferRepository, format: &OutputFormat) -> Result<()>
     Ok(())
 }
 
+pub struct AddressHistoryQuery {
+    pub address: String,
+    pub finalized: bool,
+    pub limit: usize,
+    pub offset: usize,
+}
+
 pub fn cmd_address_history(
     transfer_repo: &TransferRepository,
     token_repo: &TokenRepository,
     token_address: &Address,
-    address: &str,
-    limit: usize,
-    offset: usize,
+    query: AddressHistoryQuery,
     format: &OutputFormat,
 ) -> Result<()> {
-    let address = Address::from_str(address)
-        .map_err(|_| anyhow::anyhow!("Invalid address format: {}", address))?;
+    let address = Address::from_str(&query.address)
+        .map_err(|_| anyhow::anyhow!("Invalid address format: {}", query.address))?;
 
-    let transfers = transfer_repo.get_address_history(&address, limit, offset)?;
+    let transfers =
+        transfer_repo.get_address_history(&address, query.finalized, query.limit, query.offset)?;
     let decimals = token_repo.get_token_decimals(token_address)?;
     let output = format_transfers(&transfers, decimals, format);
     println!("{output}");

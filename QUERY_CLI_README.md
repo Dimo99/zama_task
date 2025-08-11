@@ -46,12 +46,17 @@ Query transfers with various filters:
 # Get transfers in a block range
 ./target/release/query transfers --block-range 1000000 1001000
 
+# Get only finalized transfers (confirmed beyond reorg possibility)
+./target/release/query transfers --from 0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1 --finalized
+
 # Combine with pagination
 ./target/release/query transfers --from 0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1 --limit 50 --offset 100
 
 # Export to CSV
 ./target/release/query -f csv transfers --from 0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1 > transfers.csv
 ```
+
+**Note:** The `--finalized` flag (default: false) filters results to only show transfers that have been finalized on the blockchain (typically after 2 epochs in Ethereum, ~12.8 minutes). This ensures the transfers are beyond the possibility of chain reorganization.
 
 #### 3. Top Token Holders
 Get the top N token holders by balance:
@@ -87,9 +92,14 @@ Get complete transfer history for an address (both sent and received):
 # Get all transfers involving an address
 ./target/release/query address-history 0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1
 
+# Get only finalized transfers for an address
+./target/release/query address-history 0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1 --finalized
+
 # Export to CSV for analysis
 ./target/release/query -f csv address-history 0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1 > address_history.csv
 ```
+
+**Note:** The `--finalized` flag works the same as in transfers query, filtering to only show confirmed transfers.
 
 ## Output Formats
 
